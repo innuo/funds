@@ -169,7 +169,6 @@ def load_contrib_data():
     contrib_df = pd.DataFrame({"recipient_id":recipients, "contributor":contributors})
     print(contrib_df.head)
 
-
     dbfile = open('data/contributions.pickle', 'ab')
     pickle.dump(contrib_df, dbfile)                     
     dbfile.close()
