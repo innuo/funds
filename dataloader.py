@@ -1,10 +1,12 @@
-from torch.utils.data.dataset import Dataset 
-import pickle
+from torch.utils.data.dataset import Dataset
+import pandas as pd 
 import random
 
 class ContribDataSet(Dataset): 
     def __init__(self, contributions_df):
         self.contributions = list(contributions_df.itertuples(index=False))
+        self.unique_recipients = pd.unique(contributions_df.recipient_id)
+        self.unique_contributors = pd.unique(contributions_df.contributor)
 
     def __getitem__(self, index):
         self.contributions[index]
@@ -14,17 +16,8 @@ class ContribDataSet(Dataset):
 
 class LobbyDataSet(Dataset): 
     def __init__(self, lobby_df):
-
-        self.lobbyists = list(contributions_df.itertuples(index=False))     
-        # self.lobbyist_dict = {}
-        
-        # for row in lobby_df():
-        #     if row['lobbyist'] not in lobby_df:
-        #         self.lobbyist_dict[row['lobbyist']] = []
-        #     self.lobbyist_dict[row['lobbyist']] =  row['subject_words']
-        
-        # self.lobbyists = list(self.lobbyist_dict)
-
+        self.lobbyists = list(lobby_df.itertuples(index=False))     
+    
     def __getitem__(self, index):
         self.lobbyists[index]
 
@@ -38,7 +31,3 @@ class LobbyDataSet(Dataset):
             subjects.append(ls.subject_words)
         return subjects
 
-if __name__ == '__main__':
-    word_vectors_dict = pickle.load(open('data/glove_50d.pickle', 'rb'))
-    contributions_df = pickle.load(open('data/contributions.pickle', 'rb'))
-    lobby_subjects_dict = pickle.load(open('data/lobby_subjects.pickle', 'rb'))

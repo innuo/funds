@@ -1,10 +1,13 @@
 import pandas as pd
 import numpy as np
+import pickle
+
 import torch
 import torch.nn as nn
 from torch.utils.data import DataLoader
 import torch.optim as optim
 from torch.optim.lr_scheduler import StepLR
+from dataloader import ContribDataSet, LobbyDataSet
 
 
 class ContributorModel():
@@ -14,40 +17,62 @@ class ContributorModel():
         self.contributor_list = contributor_list
         self.recipient_list = recipient_list
         self.word_vectors = word_vectors
+        self.embedding_dim = embedding_dim
+        self.phrase_embedding_dim = phrase_embedding_dim
 
         word_vec_dim = 50 #TODO
 
-        self.contributor_embedding = {}
+        self.contributor_embedding = nn.ParameterDict()
         for cont in contributor_list:
-            self.contributor_embedding[cont] = torch.nn.Parameter(torch.randn(embedding_dim) * 0.01, requires_grad=True)
+            if cont.strip() != '':
+                self.contributor_embedding[cont] = nn.Parameter(torch.randn(embedding_dim) * 0.01, requires_grad=True)
 
-        self.recipient_embedding = {}
-        for cont in recipient_list:
-            self.recipient_embedding[cont] = torch.nn.Parameter(torch.randn(embedding_dim) * 0.01, requires_grad=True)
+        self.recipient_embedding = nn.ParameterDict()
+        for rec in recipient_list:
+            self.recipient_embedding[rec] = torch.nn.Parameter(torch.randn(embedding_dim) * 0.01, requires_grad=True)
             
-        self.phrase_model_linear = nn.Sequential(
+        self.phrase_model = nn.Sequential(
                                 nn.Linear(word_vec_dim, phrase_embedding_dim),
-                                nn.ReLU(),
-                                nn.BatchNorm1d)
+                                nn.ReLU())
 
         
         self.contributor_model =  nn.Sequential(
                                 nn.Linear(phrase_embedding_dim+embedding_dim, 30),
                                 nn.ReLU(),
-                                nn.BatchNorm1d,
+                                nn.Linear(30, 1),
                                 nn.Sigmoid())
 
-    def forward(self, x):
+    def contributor_recipeint_forward(self, contributions):
+        n = len(contributions)
+        xc = torch.tensor(n, self.embedding_dim)
+        xr = torch.tensor(n, self.embedding_dim)
+        for i, rc in enumerate(contributions):
+            xc[i, :] = self.contributor_embedding[rc.contributor]
+            xr[i, :] = self.recipient_embedding[rc.recipient_id]
         
+        return xr, xc
 
+    def contributor_subject_forward(self, contributors, subjects):
 
-        return x
+        y = []
+        for i, c in enumerate(contributors):
+            if c in  self.contributor_embedding:
+                x = self.contributor_embedding[c]
+                subs = subjects[i]
+                xw = torch.zeros(self.phrase_embedding_dim)
+                for w in subs:
+                    if w in self.word_vectors:
+                        xw += self.phrase_model(self.word_vectors[w])
+            
+                y.append(self.contributor_model(torch.cat(x, xw)))
+
+        return y
 
     
     def learn_model(self, contrib_dataset, lobby_dataset, options):
         cdl = DataLoader(contrib_dataset, batch_size=options['batch_size'], shuffle=True)
         ldl = DataLoader(lobby_dataset, batch_size=options['batch_size'], shuffle=True)
-        opt = optim.Adam(self.forward_generator.parameters(), lr=options['lr'])
+        opt = optim.Adam(self.parameters(), lr=options['lr'])
         scheduler = StepLR(opt, step_size=5, gamma=0.8)
 
         ce_loss  = nn.CrossEntropyLoss()
@@ -59,42 +84,30 @@ class ContributorModel():
                 opt.zero_grad()
                 num_batches += 1
 
-
-
-                #x = torch.tensor(x_df.values)
-                x_non_missing = x == x   
-                x_missing = x != x 
-
-                z_mean, z_std     = self.latent_generator(x)
-
-                z = torch.randn(z_mean.shape) * z_std + z_mean
-
-                z_prior = torch.randn(z.shape)
-
-                ind = torch.rand (z.shape).argsort (dim = 0)
-                z_s = torch.zeros (z.shape).scatter_ (0, ind, z)
-
-                x_gen, x_gen_one_hot_dict = self.forward_generator(z, do_df=pd.DataFrame()) #TODO: conditioned
-                z_dist_loss  = mmd_loss(z, z_prior) #+ mmd_loss(z, z_s) 
- 
-                total_loss = options['z_dist_scalar'] * z_dist_loss #+ options['x_dist_scalar'] * x_dist_loss
-                            
-                for v in self.variable_dict.keys():
-                    variable_id = self.variable_dict[v]['id']
-                    inds = torch.nonzero(x_non_missing[:,variable_id]).squeeze()
-
-                    if self.variable_dict[v]['type'] == 'categorical':
-                        target = x[:,variable_id].type(torch.LongTensor)
-                        total_loss += ce_loss(x_gen_one_hot_dict[v][inds], target[inds])
-                    else:
-                        target = x[:,variable_id].type(torch.FloatTensor)
-                        total_loss += mse_loss(x_gen[inds, variable_id], target[inds])
-
-                total_loss.backward()
+                #total_loss.backward()
                 opt.step()
 
                 if (num_batches * options['batch_size']) % 5000  == 0:
                     print ("Epoch = %2d, num_b = %5d, total_loss = %.5f, z_loss = %.5f"%
-                           (epoch, num_batches, total_loss, z_dist_loss))
+                           (epoch, num_batches))
 
             scheduler.step()
+
+if __name__ == '__main__':
+    word_vectors_dict = pickle.load(open('data/glove_50d.pickle', 'rb'))
+    contributions_df = pickle.load(open('data/contributions.pickle', 'rb'))
+    lobby_subjects_dict = pickle.load(open('data/lobby_subjects.pickle', 'rb'))
+
+    lds = LobbyDataSet(lobby_subjects_dict["lobby_df"])
+    cdf = ContribDataSet(contributions_df)
+
+
+
+    cm = ContributorModel(pd.unique(contributions_df.contributor),
+                pd.unique(contributions_df.recipient_id), 
+                word_vectors_dict,
+                embedding_dim=10, phrase_embedding_dim = 10)
+
+    options = {'batch_size':10, 'lr':0.001}
+
+    cm.learn_model(cdf, lds, options)
