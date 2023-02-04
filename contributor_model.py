@@ -1,6 +1,7 @@
 import pandas as pd
 import numpy as np
 import pickle
+import random
 
 import torch
 import torch.nn as nn
@@ -10,10 +11,10 @@ from torch.optim.lr_scheduler import StepLR
 from dataloader import ContribDataSet, LobbyDataSet
 
 
-class ContributorModel():
+class ContributorModel(nn.Module):
     def __init__(self, contributor_list, recipient_list, word_vectors, 
                  embedding_dim=10, phrase_embedding_dim = 10):
-
+        super(ContributorModel, self).__init__()
         self.contributor_list = contributor_list
         self.recipient_list = recipient_list
         self.word_vectors = word_vectors
@@ -29,7 +30,7 @@ class ContributorModel():
 
         self.recipient_embedding = nn.ParameterDict()
         for rec in recipient_list:
-            self.recipient_embedding[rec] = torch.nn.Parameter(torch.randn(embedding_dim) * 0.01, requires_grad=True)
+            self.recipient_embedding["%d"%rec] = torch.nn.Parameter(torch.randn(embedding_dim) * 0.01, requires_grad=True)
             
         self.phrase_model = nn.Sequential(
                                 nn.Linear(word_vec_dim, phrase_embedding_dim),
@@ -42,13 +43,13 @@ class ContributorModel():
                                 nn.Linear(30, 1),
                                 nn.Sigmoid())
 
-    def contributor_recipeint_forward(self, contributions):
-        n = len(contributions)
-        xc = torch.tensor(n, self.embedding_dim)
-        xr = torch.tensor(n, self.embedding_dim)
-        for i, rc in enumerate(contributions):
-            xc[i, :] = self.contributor_embedding[rc.contributor]
-            xr[i, :] = self.recipient_embedding[rc.recipient_id]
+    def contributor_recipient_forward(self, contributors, recipient_ids):
+        n = len(contributors)
+        xc = torch.Tensor(n, self.embedding_dim)
+        xr = torch.Tensor(n, self.embedding_dim)
+        for i, c in enumerate(contributors):
+            xc[i, :] = self.contributor_embedding[c].squeeze()
+            xr[i, :] = self.recipient_embedding["%d"%recipient_ids[i]].squeeze()
         
         return xr, xc
 
@@ -58,13 +59,13 @@ class ContributorModel():
         for i, c in enumerate(contributors):
             if c in  self.contributor_embedding:
                 x = self.contributor_embedding[c]
-                subs = subjects[i]
+                subs = subjects[i].split(",")
                 xw = torch.zeros(self.phrase_embedding_dim)
                 for w in subs:
                     if w in self.word_vectors:
-                        xw += self.phrase_model(self.word_vectors[w])
+                        xw += self.phrase_model(torch.tensor(self.word_vectors[w]))
             
-                y.append(self.contributor_model(torch.cat(x, xw)))
+                y.append(self.contributor_model(torch.cat(x.data, xw)))
 
         return y
 
@@ -80,18 +81,25 @@ class ContributorModel():
 
         num_batches = 0
         for epoch in range(options['num_epochs']):
-            for i, data in enumerate(zip(cdl, ldl)):
+            epoch_loss = 0.0
+            for cb in cdl:
                 opt.zero_grad()
                 num_batches += 1
+                lb = next(iter(ldl))
+                
+                xr, xc = self.contributor_recipient_forward(cb[1], cb[0])
+                y1 = self.contributor_subject_forward(lb[0], lb[1])
+                y0 = self.contributor_subject_forward(lb[0], random.shuffle(lb[1]))
 
-                #total_loss.backward()
+                loss = mse_loss(xr, xc) + ce_loss(y1, torch.ones(y1.shape)) +  ce_loss(y0, torch.zeros(y0.shape))
+                loss.backward()
                 opt.step()
-
-                if (num_batches * options['batch_size']) % 5000  == 0:
-                    print ("Epoch = %2d, num_b = %5d, total_loss = %.5f, z_loss = %.5f"%
-                           (epoch, num_batches))
-
+                epoch_loss += loss
+            
             scheduler.step()
+            
+            print ("Epoch = %2d, total_loss = %.5f"%(epoch, epoch_loss))
+
 
 if __name__ == '__main__':
     word_vectors_dict = pickle.load(open('data/glove_50d.pickle', 'rb'))
@@ -108,6 +116,6 @@ if __name__ == '__main__':
                 word_vectors_dict,
                 embedding_dim=10, phrase_embedding_dim = 10)
 
-    options = {'batch_size':10, 'lr':0.001}
+    options = {'batch_size':10, 'lr':0.001, 'num_epochs':10}
 
     cm.learn_model(cdf, lds, options)

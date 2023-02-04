@@ -9,7 +9,7 @@ class ContribDataSet(Dataset):
         self.unique_contributors = pd.unique(contributions_df.contributor)
 
     def __getitem__(self, index):
-        self.contributions[index]
+        return list(self.contributions[index])
 
     def __len__(self):
         return len(self.contributions)
@@ -19,7 +19,10 @@ class LobbyDataSet(Dataset):
         self.lobbyists = list(lobby_df.itertuples(index=False))     
     
     def __getitem__(self, index):
-        self.lobbyists[index]
+        a = list(self.lobbyists[index])
+        b = [a[0], ",".join(a[1])]
+
+        return b
 
     def __len__(self):
         return len(self.lobbyists)
