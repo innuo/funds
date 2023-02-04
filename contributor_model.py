@@ -45,11 +45,14 @@ class ContributorModel(nn.Module):
 
     def contributor_recipient_forward(self, contributors, recipient_ids):
         n = len(contributors)
-        xc = torch.Tensor(n, self.embedding_dim)
-        xr = torch.Tensor(n, self.embedding_dim)
+        xc = torch.zeros(n, self.embedding_dim)
+        xr = torch.zeros(n, self.embedding_dim)
         for i, c in enumerate(contributors):
-            xc[i, :] = self.contributor_embedding[c].squeeze()
-            xr[i, :] = self.recipient_embedding["%d"%recipient_ids[i]].squeeze()
+            rk = "%d"%recipient_ids[i]
+            if c in self.contributor_embedding:
+                xc[i, :] = self.contributor_embedding[c].squeeze()
+            if rk in self.recipient_embedding:
+                xr[i, :] = self.recipient_embedding[rk].squeeze()
         
         return xr, xc
 
@@ -59,15 +62,16 @@ class ContributorModel(nn.Module):
         for i, c in enumerate(contributors):
             if c in  self.contributor_embedding:
                 x = self.contributor_embedding[c]
+
                 subs = subjects[i].split(",")
                 xw = torch.zeros(self.phrase_embedding_dim)
                 for w in subs:
                     if w in self.word_vectors:
                         xw += self.phrase_model(torch.tensor(self.word_vectors[w]))
             
-                y.append(self.contributor_model(torch.cat(x.data, xw)))
+                y.append(self.contributor_model(torch.cat((x.data, xw))))
 
-        return y
+        return torch.Tensor(y)
 
     
     def learn_model(self, contrib_dataset, lobby_dataset, options):
@@ -86,16 +90,21 @@ class ContributorModel(nn.Module):
                 opt.zero_grad()
                 num_batches += 1
                 lb = next(iter(ldl))
+                subs = list(lb[1])
                 
                 xr, xc = self.contributor_recipient_forward(cb[1], cb[0])
-                y1 = self.contributor_subject_forward(lb[0], lb[1])
-                y0 = self.contributor_subject_forward(lb[0], random.shuffle(lb[1]))
+                y1 = self.contributor_subject_forward(lb[0], subs)
+                random.shuffle(subs)
+                y0 = self.contributor_subject_forward(lb[0], subs)
 
-                loss = mse_loss(xr, xc) + ce_loss(y1, torch.ones(y1.shape)) +  ce_loss(y0, torch.zeros(y0.shape))
+                loss = mse_loss(xr, xc) + ce_loss(y1, torch.ones(len(y1))) +  ce_loss(y0, torch.zeros(len(y1)))
                 loss.backward()
                 opt.step()
                 epoch_loss += loss
-            
+
+                if num_batches % 10 == 0:
+                    print("nb = %5d, loss = %.5f"%(num_batches, loss))
+
             scheduler.step()
             
             print ("Epoch = %2d, total_loss = %.5f"%(epoch, epoch_loss))
@@ -116,6 +125,11 @@ if __name__ == '__main__':
                 word_vectors_dict,
                 embedding_dim=10, phrase_embedding_dim = 10)
 
-    options = {'batch_size':10, 'lr':0.001, 'num_epochs':10}
+    options = {'batch_size':50, 'lr':0.001, 'num_epochs':5}
 
     cm.learn_model(cdf, lds, options)
+
+    model_file = "models/models1_e10.pickle"
+    mfile = open(model_file, 'ab')
+    pickle.dump(cm, mfile)                     
+    mfile.close()
